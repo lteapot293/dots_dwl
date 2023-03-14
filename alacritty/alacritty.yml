@@ -1,0 +1,62 @@
+env:
+  TERM: xterm-256color
+
+#  shell:
+#  program: /bin/zsh
+#  args:
+#  - -l
+#  - -c
+#  - "tmux"
+
+window:
+  dimensions:
+    columns: 100
+    lines: 30
+  padding:
+    x: 3
+    y: 3
+  position:
+    x: 130
+    y: 70
+  decorations: none
+  dynamic_title: true
+  opacity: 0.91
+
+class:
+  gtk_theme_variant: Dracula 
+
+scrolling:
+  history: 10000
+  multiplier: 3
+
+font:
+  normal:
+    family: FiraCode Nerd Font
+    style: Medium
+  size: 19
+  offset:
+    x: 0
+    y: 0
+  glyph_offset:
+    x: 0
+    y: 0
+
+
+draw_bold_text_with_bright_colors: true
+
+colors:
+  primary:
+     background: "#282A36"
+     foreground: "#F8F8F2"
+     selection: "#44475A"
+     comment: "#6272A4"
+     red: "#FF5555"
+     orange: "#FFB86C"
+     yellow: "#F1FA8C"
+     green: "#50FA7B"
+     purple: "#BD93F9"
+     cyan: "#8BE9FD"
+     pink: "#FF79C6"
+
+
+

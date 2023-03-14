@@ -1,0 +1,182 @@
+From a106af444557161f076bd009844db3f018f3dac9 Mon Sep 17 00:00:00 2001
+From: Dmitry Zakharchenko <dmitz@disroot.org>
+Date: Fri, 2 Dec 2022 20:46:12 +0200
+Subject: [PATCH] autostart: sync with 0.4-r1
+
+---
+ config.def.h |  6 ++++
+ dwl.c        | 99 +++++++++++++++++++++++++++++++++++++++-------------
+ 2 files changed, 81 insertions(+), 24 deletions(-)
+
+diff --git a/config.def.h b/config.def.h
+index 8f01192b..d2a0ab46 100644
+--- a/config.def.h
++++ b/config.def.h
+@@ -86,6 +86,12 @@ LIBINPUT_CONFIG_ACCEL_PROFILE_ADAPTIVE
+ static const enum libinput_config_accel_profile accel_profile = LIBINPUT_CONFIG_ACCEL_PROFILE_ADAPTIVE;
+ static const double accel_speed = 0.0;
+ 
++/* Autostart */
++static const char *const autostart[] = {
++        "sh", "-c", "swaybg --image /xap/local/background", NULL,
++        NULL /* terminate */
++};
++
+ /* If you want to use the windows key for MODKEY, use WLR_MODIFIER_LOGO */
+ #define MODKEY WLR_MODIFIER_ALT
+ 
+diff --git a/dwl.c b/dwl.c
+index 5f6d0613..2c833e3d 100644
+--- a/dwl.c
++++ b/dwl.c
+@@ -209,6 +209,7 @@ static void arrange(Monitor *m);
+ static void arrangelayer(Monitor *m, struct wl_list *list,
+ 		struct wlr_box *usable_area, int exclusive);
+ static void arrangelayers(Monitor *m);
++static void autostartexec(void);
+ static void axisnotify(struct wl_listener *listener, void *data);
+ static void buttonpress(struct wl_listener *listener, void *data);
+ static void chvt(const Arg *arg);
+@@ -272,6 +273,7 @@ static void setmon(Client *c, Monitor *m, unsigned int newtags);
+ static void setpsel(struct wl_listener *listener, void *data);
+ static void setsel(struct wl_listener *listener, void *data);
+ static void setup(void);
++static void sigchld(int unused);
+ static void spawn(const Arg *arg);
+ static void startdrag(struct wl_listener *listener, void *data);
+ static void tag(const Arg *arg);
+@@ -362,7 +364,6 @@ static void configurex11(struct wl_listener *listener, void *data);
+ static void createnotifyx11(struct wl_listener *listener, void *data);
+ static Atom getatom(xcb_connection_t *xc, const char *name);
+ static void sethints(struct wl_listener *listener, void *data);
+-static void sigchld(int unused);
+ static void xwaylandready(struct wl_listener *listener, void *data);
+ static struct wl_listener new_xwayland_surface = {.notify = createnotifyx11};
+ static struct wl_listener xwayland_ready = {.notify = xwaylandready};
+@@ -379,6 +380,9 @@ static Atom netatom[NetLast];
+ /* compile-time check if all tags fit into an unsigned int bit array. */
+ struct NumTags { char limitexceeded[LENGTH(tags) > 31 ? -1 : 1]; };
+ 
++static pid_t *autostart_pids;
++static size_t autostart_len;
++
+ /* function implementations */
+ void
+ applybounds(Client *c, struct wlr_box *bbox)
+@@ -407,6 +411,30 @@ applybounds(Client *c, struct wlr_box *bbox)
+ 		c->geom.y = bbox->y;
+ }
+ 
++void
++autostartexec(void)
++{
++	const char *const *p;
++	size_t i = 0;
++
++	/* count entries */
++	for (p = autostart; *p; autostart_len++, p++)
++		while (*++p);
++
++	autostart_pids = calloc(autostart_len, sizeof(pid_t));
++	for (p = autostart; *p; i++, p++) {
++		if ((autostart_pids[i] = fork()) == 0) {
++			setsid();
++			execvp(*p, (char *const *)p);
++			fprintf(stderr, "dwl: execvp %s\n", *p);
++			perror(" failed");
++			_exit(EXIT_FAILURE);
++		}
++		/* skip arguments */
++		while (*++p);
++	}
++}
++
+ void
+ applyrules(Client *c)
+ {
+@@ -1676,6 +1704,16 @@ printstatus(void)
+ void
+ quit(const Arg *arg)
+ {
++	size_t i;
++
++	/* kill child processes */
++	for (i = 0; i < autostart_len; i++) {
++		if (0 < autostart_pids[i]) {
++			kill(autostart_pids[i], SIGTERM);
++			waitpid(autostart_pids[i], NULL, 0);
++		}
++	}
++
+ 	wl_display_terminate(dpy);
+ }
+ 
+@@ -1769,6 +1807,7 @@ run(char *startup_cmd)
+ 		die("startup: backend_start");
+ 
+ 	/* Now that the socket exists and the backend is started, run the startup command */
++	autostartexec();
+ 	if (startup_cmd) {
+ 		int piperw[2];
+ 		if (pipe(piperw) < 0)
+@@ -1957,11 +1996,7 @@ setup(void)
+ 	dpy = wl_display_create();
+ 
+ 	/* Set up signal handlers */
+-#ifdef XWAYLAND
+ 	sigchld(0);
+-#else
+-	signal(SIGCHLD, SIG_IGN);
+-#endif
+ 	signal(SIGINT, quitsignal);
+ 	signal(SIGTERM, quitsignal);
+ 
+@@ -2129,6 +2164,41 @@ setup(void)
+ #endif
+ }
+ 
++void
++sigchld(int unused)
++{
++	siginfo_t in;
++	pid_t pid;
++	/* We should be able to remove this function in favor of a simple
++	 *     signal(SIGCHLD, SIG_IGN);
++	 * but the Xwayland implementation in wlroots currently prevents us from
++	 * setting our own disposition for SIGCHLD.
++	 */
++
++	if (signal(SIGCHLD, sigchld) == SIG_ERR)
++		die("can't install SIGCHLD handler:");
++	/* WNOWAIT leaves the child in a waitable state, in case this is the
++	 * XWayland process
++	 */
++	while (!waitid(P_ALL, 0, &in, WEXITED|WNOHANG|WNOWAIT) && in.si_pid
++			&& in.si_pid != xwayland->server->pid) {
++		if (0 < (pid = waitpid(in.si_pid, NULL, WNOHANG))) {
++			pid_t *p, *lim;
++
++			if (!(p = autostart_pids))
++				continue;
++			lim = &p[autostart_len];
++
++			for (; p < lim; p++) {
++				if (*p == pid) {
++					*p = -1;
++					break;
++				}
++			}
++		}
++	}
++}
++
+ void
+ spawn(const Arg *arg)
+ {
+@@ -2549,25 +2619,6 @@ sethints(struct wl_listener *listener, void *data)
+ 	}
+ }
+ 
+ void
+ xwaylandready(struct wl_listener *listener, void *data)
+ {
