@@ -1,0 +1,71 @@
+From 2900a0eb41993160129de2aa4845cee259624ce2 Mon Sep 17 00:00:00 2001
+From: Dmitry Zakharchenko <dmitz@disroot.org>
+Date: Tue, 3 Jan 2023 19:33:50 +0200
+Subject: [PATCH] center: sync with 0.4
+
+---
+ config.def.h |  6 +++---
+ dwl.c        | 10 +++++++++-
+ 2 files changed, 12 insertions(+), 4 deletions(-)
+
+diff --git a/config.def.h b/config.def.h
+index a4f7c13d..c731699f 100644
+--- a/config.def.h
++++ b/config.def.h
+@@ -12,11 +12,11 @@ static const float fullscreen_bg[]         = {0.1, 0.1, 0.1, 1.0};
+ static const char *tags[] = { "1", "2", "3", "4", "5", "6", "7", "8", "9" };
+ 
+ static const Rule rules[] = {
+-	/* app_id     title       tags mask     isfloating   monitor */
++	/* app_id     title       tags mask  iscentered  isfloating  monitor */
+ 	/* examples:
+-	{ "Gimp",     NULL,       0,            1,           -1 },
++	{ "Gimp",     NULL,       0,         0,          1,          -1 },
+ 	*/
+-	{ "firefox",  NULL,       1 << 8,       0,           -1 },
++	{ "firefox",  NULL,       1 << 8,    0,          1,          -1 },
+ };
+ 
+ /* layout(s) */
+diff --git a/dwl.c b/dwl.c
+index 19bb6ce3..98dc7a34 100644
+--- a/dwl.c
++++ b/dwl.c
+@@ -124,7 +124,7 @@ typedef struct {
+ #endif
+ 	unsigned int bw;
+ 	unsigned int tags;
+-	int isfloating, isurgent, isfullscreen;
++	int iscentered, isfloating, isurgent, isfullscreen;
+ 	uint32_t resize; /* configure serial of a pending resize */
+ } Client;
+ 
+@@ -200,6 +200,7 @@ typedef struct {
+ 	const char *id;
+ 	const char *title;
+ 	unsigned int tags;
++	int iscentered;
+ 	int isfloating;
+ 	int monitor;
+ } Rule;
+@@ -452,6 +453,7 @@ applyrules(Client *c)
+ 	for (r = rules; r < END(rules); r++) {
+ 		if ((!r->title || strstr(title, r->title))
+ 				&& (!r->id || strstr(appid, r->id))) {
++			c->iscentered = r->iscentered;
+ 			c->isfloating = r->isfloating;
+ 			newtags |= r->tags;
+ 			i = 0;
+@@ -460,6 +462,12 @@ applyrules(Client *c)
+ 					mon = m;
+ 		}
+ 	}
++
++	if (c->iscentered) {
++		c->geom.x = (mon->w.width - c->geom.width) / 2 + mon->m.x;
++		c->geom.y = (mon->w.height - c->geom.height) / 2 + mon->m.y;
++	}
++
+ 	wlr_scene_node_reparent(&c->scene->node, layers[c->isfloating ? LyrFloat : LyrTile]);
+ 	setmon(c, mon, newtags);
+ }
