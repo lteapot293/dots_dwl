@@ -64,4 +64,4 @@ export XCURSOR_THEME=Catppuccin-Mocha-Dark-Cursors
 export XCURSOR_SIZE=16
 export GTK_THEME=Nordic
 
-exec Hyprland
+exec /home/teapot293/.local/bin/dwl
