@@ -8,5 +8,5 @@ gsettings set org.gnome.desktop.interface gtk-theme Nordic &
 gsettings set org.gnome.desktop.interface cursor-size 15 &
 gsettings set org.gnome.desktop.interface font-name Fira code medium 12 &
 gsettings set org.gnome.desktop.interface cursor-theme Catppuccin-Mocha-Dark-Cursors &
-someblocks -p | while read -r line; do dwlb -status all "$line"; done &
+
  
