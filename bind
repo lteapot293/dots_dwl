@@ -1,3 +1,17 @@
+	/* app_id     title       tags mask  iscentered  isfloating  monitor */
+	/* examples:
+	{ "Gimp",     NULL,       0,         0,          1,          -1 },
+	*/
+	{ "geany",   "Вопрос",   0,         1,         1,           -1 },
+	{ "nemo",   "Свойства",   0,         1,         1,           -1 },
+	{ "gedit",  NULL,       1 << 8,    0,          1,          -1 },
+};
+
+
+
+
+
+
 /* commands */
 static const char *termcmd[] = { "alacritty", NULL };
 static const char *firefox[] = { "firefox", NULL };
