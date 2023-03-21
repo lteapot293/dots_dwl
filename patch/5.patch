@@ -1,0 +1,766 @@
+From ec00ae9cc1ef363fef13e029932e789ae41ef974 Mon Sep 17 00:00:00 2001
+From: MadcowOG <N/A>
+Date: Thu, 23 Feb 2023 00:28:20 -0800
+Subject: [PATCH 1/6] added ipc functionality
+
+---
+ Makefile                              |  15 +-
+ config.def.h                          |   1 +
+ dwl.c                                 | 225 ++++++++++++++++++++++++++
+ protocols/dwl-bar-ipc-unstable-v1.xml | 141 ++++++++++++++++
+ 4 files changed, 378 insertions(+), 4 deletions(-)
+ create mode 100644 protocols/dwl-bar-ipc-unstable-v1.xml
+
+diff --git a/Makefile b/Makefile
+index ccca0794..a027522b 100644
+--- a/Makefile
++++ b/Makefile
+@@ -14,10 +14,11 @@ DWLCFLAGS = `$(PKG_CONFIG) --cflags $(PKGS)` $(DWLCPPFLAGS) $(DWLDEVCFLAGS) $(CF
+ LDLIBS    = `$(PKG_CONFIG) --libs $(PKGS)` $(LIBS)
+ 
+ all: dwl
+-dwl: dwl.o util.o
+-	$(CC) dwl.o util.o $(LDLIBS) $(LDFLAGS) $(DWLCFLAGS) -o $@
+-dwl.o: dwl.c config.mk config.h client.h xdg-shell-protocol.h wlr-layer-shell-unstable-v1-protocol.h
++dwl: dwl.o util.o dwl-bar-ipc-unstable-v1-protocol.o
++	$(CC) dwl.o util.o dwl-bar-ipc-unstable-v1-protocol.o $(LDLIBS) $(LDFLAGS) $(DWLCFLAGS) -o $@
++dwl.o: dwl.c config.mk config.h client.h xdg-shell-protocol.h wlr-layer-shell-unstable-v1-protocol.h dwl-bar-ipc-unstable-v1-protocol.h
+ util.o: util.c util.h
++dwl-bar-ipc-unstable-v1-protocol.o: dwl-bar-ipc-unstable-v1-protocol.c dwl-bar-ipc-unstable-v1-protocol.h
+ 
+ # wayland-scanner is a tool which generates C headers and rigging for Wayland
+ # protocols, which are specified in XML. wlroots requires you to rig these up
+@@ -31,11 +32,17 @@ xdg-shell-protocol.h:
+ wlr-layer-shell-unstable-v1-protocol.h:
+ 	$(WAYLAND_SCANNER) server-header \
+ 		protocols/wlr-layer-shell-unstable-v1.xml $@
++dwl-bar-ipc-unstable-v1-protocol.h:
++	$(WAYLAND_SCANNER) server-header \
++		protocols/dwl-bar-ipc-unstable-v1.xml $@
++dwl-bar-ipc-unstable-v1-protocol.c:
++	$(WAYLAND_SCANNER) private-code \
++		protocols/dwl-bar-ipc-unstable-v1.xml $@
+ 
+ config.h:
+ 	cp config.def.h $@
+ clean:
+-	rm -f dwl *.o *-protocol.h
++	rm -f dwl *.o *-protocol.*
+ 
+ dist: clean
+ 	mkdir -p dwl-$(VERSION)
+diff --git a/config.def.h b/config.def.h
+index 419e6ef4..c3960d26 100644
+--- a/config.def.h
++++ b/config.def.h
+@@ -112,6 +112,7 @@ static const Key keys[] = {
+ 	/* modifier                  key                 function        argument */
+ 	{ MODKEY,                    XKB_KEY_p,          spawn,          {.v = menucmd} },
+ 	{ MODKEY|WLR_MODIFIER_SHIFT, XKB_KEY_Return,     spawn,          {.v = termcmd} },
++	{ MODKEY,                    XKB_KEY_b,          toggle_visibility, {0}},
+ 	{ MODKEY,                    XKB_KEY_j,          focusstack,     {.i = +1} },
+ 	{ MODKEY,                    XKB_KEY_k,          focusstack,     {.i = -1} },
+ 	{ MODKEY,                    XKB_KEY_i,          incnmaster,     {.i = +1} },
+diff --git a/dwl.c b/dwl.c
+index 8043bf98..58b6f008 100644
+--- a/dwl.c
++++ b/dwl.c
+@@ -12,6 +12,7 @@
+ #include <time.h>
+ #include <unistd.h>
+ #include <wayland-server-core.h>
++#include <wayland-util.h>
+ #include <wlr/backend.h>
+ #include <wlr/backend/libinput.h>
+ #include <wlr/render/allocator.h>
+@@ -52,6 +53,7 @@
+ #include <wlr/types/wlr_xdg_shell.h>
+ #include <wlr/util/log.h>
+ #include <xkbcommon/xkbcommon.h>
++#include "dwl-bar-ipc-unstable-v1-protocol.h"
+ #ifdef XWAYLAND
+ #include <wlr/xwayland.h>
+ #include <X11/Xlib.h>
+@@ -172,9 +174,16 @@ typedef struct {
+ 	void (*arrange)(Monitor *);
+ } Layout;
+ 
++typedef struct {
++	struct wl_list link;
++	struct wl_resource* resource;
++	Monitor *monitor;
++} DwlOutput;
++
+ struct Monitor {
+ 	struct wl_list link;
+ 	struct wlr_output *wlr_output;
++	struct wl_list dwl_outputs;
+ 	struct wlr_scene_output *scene_output;
+ 	struct wlr_scene_rect *fullscreen_bg; /* See createmon() for info */
+ 	struct wl_listener frame;
+@@ -254,6 +263,17 @@ static void destroynotify(struct wl_listener *listener, void *data);
+ static void destroysessionlock(struct wl_listener *listener, void *data);
+ static void destroysessionmgr(struct wl_listener *listener, void *data);
+ static Monitor *dirtomon(enum wlr_direction dir);
++static void dwl_manager_bind(struct wl_client *client, void *data, uint32_t version, uint32_t id);
++static void dwl_manager_destroy(struct wl_resource* resource);
++static void dwl_manager_get_output(struct wl_client *client, struct wl_resource *resource, uint32_t id, struct wl_resource *output);
++static void dwl_manager_release(struct wl_client *client, struct wl_resource *resource);
++static void dwl_output_destroy(struct wl_resource *resource);
++static void dwl_output_set_client_tags(struct wl_client *client, struct wl_resource *resource, uint32_t and_tags, uint32_t xor_tags);
++static void dwl_output_set_layout(struct wl_client *client, struct wl_resource *resource, uint32_t index);
++static void dwl_output_set_tags(struct wl_client *client, struct wl_resource *resource, uint32_t tagmask, uint32_t toggle_tagset);
++static void dwl_output_printstatus(Monitor* monitor);
++static void dwl_output_printstatus_to(Monitor* monitor, DwlOutput *output);
++static void dwl_output_release(struct wl_client *client, struct wl_resource *resource);
+ static void focusclient(Client *c, int lift);
+ static void focusmon(const Arg *arg);
+ static void focusstack(const Arg *arg);
+@@ -305,6 +325,7 @@ static void togglefloating(const Arg *arg);
+ static void togglefullscreen(const Arg *arg);
+ static void toggletag(const Arg *arg);
+ static void toggleview(const Arg *arg);
++static void toggle_visibility(const Arg *arg);
+ static void unlocksession(struct wl_listener *listener, void *data);
+ static void unmaplayersurfacenotify(struct wl_listener *listener, void *data);
+ static void unmapnotify(struct wl_listener *listener, void *data);
+@@ -370,6 +391,8 @@ static struct wl_listener cursor_frame = {.notify = cursorframe};
+ static struct wl_listener cursor_motion = {.notify = motionrelative};
+ static struct wl_listener cursor_motion_absolute = {.notify = motionabsolute};
+ static struct wl_listener drag_icon_destroy = {.notify = destroydragicon};
++static struct zdwl_manager_v1_interface dwl_manager_implementation = {.get_output = dwl_manager_get_output, .release = dwl_manager_release};
++static struct zdwl_output_v1_interface dwl_output_implementation = {.release = dwl_output_release, .set_client_tags = dwl_output_set_client_tags, .set_tags = dwl_output_set_tags, .set_layout = dwl_output_set_layout};
+ static struct wl_listener idle_inhibitor_create = {.notify = createidleinhibitor};
+ static struct wl_listener idle_inhibitor_destroy = {.notify = destroyidleinhibitor};
+ static struct wl_listener layout_change = {.notify = updatemons};
+@@ -684,6 +707,7 @@ cleanupkeyboard(struct wl_listener *listener, void *data)
+ void
+ cleanupmon(struct wl_listener *listener, void *data)
+ {
++	DwlOutput *output, *output_tmp;
+ 	Monitor *m = wl_container_of(listener, m, destroy);
+ 	LayerSurface *l, *tmp;
+ 	int i;
+@@ -700,6 +724,11 @@ cleanupmon(struct wl_listener *listener, void *data)
+ 	wlr_scene_output_destroy(m->scene_output);
+ 	wlr_scene_node_destroy(&m->fullscreen_bg->node);
+ 
++	wl_list_for_each_safe(output, output_tmp, &m->dwl_outputs, link) {
++		wl_resource_set_user_data(output->resource, NULL);
++		free(output);
++	}
++
+ 	closemon(m);
+ 	free(m);
+ }
+@@ -905,6 +934,7 @@ createmon(struct wl_listener *listener, void *data)
+ 	Monitor *m = wlr_output->data = ecalloc(1, sizeof(*m));
+ 	m->wlr_output = wlr_output;
+ 
++	wl_list_init(&m->dwl_outputs);
+ 	wlr_output_init_render(wlr_output, alloc, drw);
+ 
+ 	/* Initialize monitor state using configured rules */
+@@ -1196,6 +1226,190 @@ dirtomon(enum wlr_direction dir)
+ 	return selmon;
+ }
+ 
++void
++dwl_manager_bind(struct wl_client *client, void *data, uint32_t version, uint32_t id)
++{
++	int i;
++	struct wl_resource* resource = wl_resource_create(client, &zdwl_manager_v1_interface, version, id);
++	if (!resource) {
++		wl_client_post_no_memory(client);
++		return;
++	}
++
++	wl_resource_set_implementation(resource, &dwl_manager_implementation, NULL, dwl_manager_destroy);
++
++	for (i = 0; i < LENGTH(tags); i++) {
++		zdwl_manager_v1_send_tag(resource, tags[i]);
++	}
++
++	for (i = 0; i < LENGTH(layouts); i++) {
++		zdwl_manager_v1_send_layout(resource, layouts[i].symbol);
++	}
++}
++
++void dwl_manager_destroy(struct wl_resource* resource) {/* No state to destroy */}
++
++void
++dwl_manager_get_output(struct wl_client *client, struct wl_resource *resource, uint32_t id, struct wl_resource *output)
++{
++	DwlOutput* dwl_output;
++	Monitor* monitor = wlr_output_from_resource(output)->data;
++	struct wl_resource* dwl_output_resource = wl_resource_create(client, &zdwl_output_v1_interface, wl_resource_get_version(resource), id);
++	if (!dwl_output_resource) {
++		wl_client_post_no_memory(client);
++		return;
++	}
++
++	dwl_output = ecalloc(1, sizeof(*dwl_output));
++	dwl_output->resource = dwl_output_resource;
++	dwl_output->monitor = monitor;
++
++	wl_resource_set_implementation(dwl_output_resource, &dwl_output_implementation, dwl_output, dwl_output_destroy);
++	wl_list_insert(&monitor->dwl_outputs, &dwl_output->link);
++
++	dwl_output_printstatus_to(monitor, dwl_output);
++}
++
++void
++dwl_manager_release(struct wl_client *client, struct wl_resource *resource)
++{
++	wl_resource_destroy(resource);
++}
++
++void
++dwl_output_destroy(struct wl_resource *resource)
++{
++	DwlOutput *output = wl_resource_get_user_data(resource);
++	if (output) {
++		wl_list_remove(&output->link);
++		free(output);
++	}
++}
++
++void
++dwl_output_set_client_tags(struct wl_client *client, struct wl_resource *resource, uint32_t and_tags, uint32_t xor_tags)
++{
++	DwlOutput *output;
++	Client *selected_client;
++	unsigned int newtags;
++
++	output = wl_resource_get_user_data(resource);
++	if (!output)
++		return;
++
++	selected_client = focustop(output->monitor);
++	if (!selected_client)
++		return;
++
++	newtags = (selected_client->tags & and_tags) ^ xor_tags;
++	if (!newtags)
++        return;
++
++    selected_client->tags = newtags;
++    focusclient(focustop(selmon), 1);
++    arrange(selmon);
++}
++
++void
++dwl_output_set_layout(struct wl_client *client, struct wl_resource *resource, uint32_t index)
++{
++	DwlOutput *output;
++	Monitor *monitor;
++
++	if (index >= LENGTH(layouts))
++		return;
++
++	output = wl_resource_get_user_data(resource);
++	if (!output)
++		return;
++
++	monitor = output->monitor;
++	if (!monitor)
++		return;
++
++	if (index != monitor->lt[monitor->sellt] - layouts)
++		monitor->sellt ^= 1;
++
++    monitor->lt[monitor->sellt] = &layouts[index];
++	arrange(monitor);
++	printstatus();
++}
++
++void
++dwl_output_set_tags(struct wl_client *client, struct wl_resource *resource, uint32_t tagmask, uint32_t toggle_tagset)
++{
++	DwlOutput *output;
++	Monitor *monitor;
++
++	output = wl_resource_get_user_data(resource);
++	if (!output)
++		return;
++
++	monitor = output->monitor;
++	if (!monitor)
++		return;
++
++	if ((tagmask & TAGMASK) == monitor->tagset[monitor->seltags])
++		return;
++	if (toggle_tagset)
++		monitor->seltags ^= 1;
++	if (tagmask & TAGMASK)
++		monitor->tagset[monitor->seltags] = tagmask & TAGMASK;
++
++	focusclient(focustop(monitor), 1);
++	arrange(monitor);
++	printstatus();
++}
++
++void
++dwl_output_printstatus(Monitor* monitor)
++{
++	DwlOutput *output;
++	wl_list_for_each(output, &monitor->dwl_outputs, link) {
++		dwl_output_printstatus_to(monitor, output);
++	}
++}
++
++void
++dwl_output_printstatus_to(Monitor* monitor, DwlOutput *output)
++{
++	Client *c, *focused;
++	int tagmask, state, numclients, focused_client, tag;
++	focused = focustop(monitor);
++	zdwl_output_v1_send_active(output->resource, monitor == selmon);
++
++	for ( tag = 0 ; tag < LENGTH(tags); tag++) {
++		numclients = state = 0;
++		focused_client = -1;
++		tagmask = 1 << tag;
++		if ((tagmask & monitor->tagset[monitor->seltags]) != 0)
++			state |= ZDWL_OUTPUT_V1_TAG_STATE_ACTIVE;
++
++		wl_list_for_each(c, &clients, link) {
++			if (c->mon != monitor)
++				continue;
++			if (!(c->tags & tagmask))
++				continue;
++			if (c == focused)
++				focused_client = numclients;
++			if (c->isurgent)
++				state |= ZDWL_OUTPUT_V1_TAG_STATE_URGENT;
++
++			numclients++;
++		}
++		zdwl_output_v1_send_tag(output->resource, tag, state, numclients, focused_client);
++	}
++	zdwl_output_v1_send_layout(output->resource, monitor->lt[monitor->sellt] - layouts);
++	zdwl_output_v1_send_title(output->resource, focused ? client_get_title(focused) : "");
++	zdwl_output_v1_send_frame(output->resource);
++}
++
++void
++dwl_output_release(struct wl_client *client, struct wl_resource *resource)
++{
++	wl_resource_destroy(resource);
++}
++
+ void
+ focusclient(Client *c, int lift)
+ {
+@@ -1852,6 +2066,7 @@ printstatus(void)
+ 		printf("%s tags %u %u %u %u\n", m->wlr_output->name, occ, m->tagset[m->seltags],
+ 				sel, urg);
+ 		printf("%s layout %s\n", m->wlr_output->name, m->lt[m->sellt]->symbol);
++		dwl_output_printstatus(m);
+ 	}
+ 	fflush(stdout);
+ }
+@@ -2289,6 +2504,7 @@ setup(void)
+ 	wl_signal_add(&output_mgr->events.test, &output_mgr_test);
+ 
+ 	wlr_scene_set_presentation(scene, wlr_presentation_create(dpy, backend));
++	wl_global_create(dpy, &zdwl_manager_v1_interface, 1, NULL, dwl_manager_bind);
+ 
+ #ifdef XWAYLAND
+ 	/*
+@@ -2430,6 +2646,15 @@ toggleview(const Arg *arg)
+ 	printstatus();
+ }
+ 
++void
++toggle_visibility(const Arg* arg)
++{
++	DwlOutput* output;
++	wl_list_for_each(output, &selmon->dwl_outputs, link) {
++		zdwl_output_v1_send_toggle_visibility(output->resource);
++	}
++}
++
+ void
+ unlocksession(struct wl_listener *listener, void *data)
+ {
+diff --git a/protocols/dwl-bar-ipc-unstable-v1.xml b/protocols/dwl-bar-ipc-unstable-v1.xml
+new file mode 100644
+index 00000000..c2d0674f
+--- /dev/null
++++ b/protocols/dwl-bar-ipc-unstable-v1.xml
+@@ -0,0 +1,141 @@
++<?xml version="1.0" encoding="utf-8"?>
++<!--
++This is largely ripped from somebar's ipc patchset; just with some personal modifications.
++I would probably just submit raphi's patchset but I don't think that would be polite.
++-->
++<protocol name="dwl_bar_ipc_unstable_v1">
++  <description summary="inter-proccess-communication about dwl's state">
++    This protocol allows clients to get updates from dwl and vice versa.
++
++    Warning! This protocol is experimental and may make backward incompatible changes.
++  </description>
++
++  <interface name="zdwl_manager_v1" version="1">
++    <description summary="manage dwl state">
++      This interface is exposed as a global in wl_registry.
++
++      Clients can use this interface to get a dwl_output.
++      After binding the client will revieve dwl_manager.tag and dwl_manager.layout events.
++      The dwl_manager.tag and dwl_manager.layout events expose tags and layouts to the client.
++    </description>
++
++    <request name="release" type="destructor">
++      <description summary="release dwl_manager">
++        Indicates that the client will not the dwl_manager object anymore.
++        Objects created through this instance are not affected.
++      </description>
++    </request>
++
++    <request name="get_output">
++      <description summary="get a dwl_output for a wl_output">
++        Get a dwl_output for the specified wl_output.
++      </description>
++      <arg name="id" type="new_id" interface="zdwl_output_v1"/>
++      <arg name="output" type="object" interface="wl_output"/>
++    </request>
++
++    <event name="tag">
++      <description summary="Announces a tag">
++        This event is sent after binding.
++        A roundtrip after binding guarantees the client recieved all tags.
++      </description>
++      <arg name="name" type="string"/>
++    </event>
++
++    <event name="layout">
++      <description summary="Announces a layout">
++        This event is sent after binding.
++        A roundtrip after binding guarantees the client recieved all layouts.
++      </description>
++      <arg name="name" type="string"/>
++    </event>
++  </interface>
++
++  <interface name="zdwl_output_v1" version="1">
++    <description summary="control dwl output">
++      Observe and control a dwl output.
++
++      Events are double-buffered:
++      Clients should cache events and redraw when a dwl_output.done event is sent.
++
++      Request are not double-buffered:
++      The compositor will update immediately upon request.
++    </description>
++
++    <enum name="tag_state">
++      <entry name="none" value="0" summary="no state"/>
++      <entry name="active" value="1" summary="tag is active"/>
++      <entry name="urgent" value="2" summary="tag has at least one urgent client"/>
++    </enum>
++
++    <request name="release" type="destructor">
++      <description summary="release dwl_output">
++        Indicates to that the client no longer needs this dwl_output.
++      </description>
++    </request>
++
++    <event name="toggle_visibility">
++      <description summary="Toggle client visibilty">
++        Indicates the client should hide or show themselves.
++        If the client is visible then hide, if hidden then show.
++      </description>
++    </event>
++
++    <event name="active">
++      <description summary="Update the selected output.">
++        Indicates if the output is active. Zero is invalid, nonzero is valid.
++      </description>
++      <arg name="active" type="uint"/>
++    </event>
++
++    <event name="tag">
++      <description summary="Update the state of a tag.">
++        Indicates that a tag has been updated.
++      </description>
++      <arg name="tag" type="uint" summary="Index of the tag"/>
++      <arg name="state" type="uint" enum="tag_state" summary="The state of the tag."/>
++      <arg name="clients" type="uint" summary="The number of clients in the tag."/>
++      <arg name="focused" type="uint" summary="If there is a focused client. Nonzero being valid, zero being invalid."/>
++    </event>
++
++    <event name="layout">
++      <description summary="Update the layout.">
++        Indicates a new layout is selected.
++      </description>
++      <arg name="layout" type="uint" summary="Index of the layout."/>
++    </event>
++
++    <event name="title">
++      <description summary="Update the title.">
++        Indicates the title has changed.
++      </description>
++      <arg name="title" type="string" summary="The new title name."/>
++    </event>
++
++    <event name="frame">
++      <description summary="The update sequence is done.">
++        Indicates that a sequence of status updates have finished and the client should redraw.
++      </description>
++    </event>
++
++    <request name="set_layout">
++      <description summary="Set the layout of this output"/>
++      <arg name="index" type="uint" summary="index of a layout recieved by dwl_manager.layout"/>
++    </request>
++
++    <request name="set_tags">
++      <description summary="Set the active tags of this output"/>
++      <arg name="tagmask" type="uint" summary="bitmask of the tags that should be set."/>
++      <arg name="toggle_tagset" type="uint" summary="toggle the selected tagset, zero for invalid, nonzero for valid."/>
++    </request>
++
++    <request name="set_client_tags">
++      <description summary="Set the tags of the focused client.">
++        The tags are updated as follows:
++        new_tags = (current_tags AND and_tags) XOR xor_tags
++      </description>
++      <arg name="and_tags" type="uint"/>
++      <arg name="xor_tags" type="uint"/>
++    </request>
++  </interface>
++</protocol>
+
+From d20aa3b667af6ed073e88f1c1eb617bec1d4c300 Mon Sep 17 00:00:00 2001
+From: MadcowOG <N/A>
+Date: Sun, 26 Feb 2023 13:18:09 -0800
+Subject: [PATCH 2/6] focused_client should be 0 then 1 not -1 then not -1.
+
+---
+ dwl.c | 5 ++---
+ 1 file changed, 2 insertions(+), 3 deletions(-)
+
+diff --git a/dwl.c b/dwl.c
+index 58b6f008..f0f5f68d 100644
+--- a/dwl.c
++++ b/dwl.c
+@@ -1379,8 +1379,7 @@ dwl_output_printstatus_to(Monitor* monitor, DwlOutput *output)
+ 	zdwl_output_v1_send_active(output->resource, monitor == selmon);
+ 
+ 	for ( tag = 0 ; tag < LENGTH(tags); tag++) {
+-		numclients = state = 0;
+-		focused_client = -1;
++		numclients = state = focused_client = 0;
+ 		tagmask = 1 << tag;
+ 		if ((tagmask & monitor->tagset[monitor->seltags]) != 0)
+ 			state |= ZDWL_OUTPUT_V1_TAG_STATE_ACTIVE;
+@@ -1391,7 +1390,7 @@ dwl_output_printstatus_to(Monitor* monitor, DwlOutput *output)
+ 			if (!(c->tags & tagmask))
+ 				continue;
+ 			if (c == focused)
+-				focused_client = numclients;
++				focused_client = 1;
+ 			if (c->isurgent)
+ 				state |= ZDWL_OUTPUT_V1_TAG_STATE_URGENT;
+ 
+
+From e736f44db576d6ab99aab19aa2e2175c1e6f17f8 Mon Sep 17 00:00:00 2001
+From: MadcowOG <N/A>
+Date: Mon, 27 Feb 2023 13:47:39 -0800
+Subject: [PATCH 3/6] Added version 2 of protocol. Added functionality for
+ appid.
+
+---
+ dwl.c                                 | 11 ++++++++---
+ protocols/dwl-bar-ipc-unstable-v1.xml | 11 +++++++++--
+ 2 files changed, 17 insertions(+), 5 deletions(-)
+
+diff --git a/dwl.c b/dwl.c
+index f0f5f68d..b01d3106 100644
+--- a/dwl.c
++++ b/dwl.c
+@@ -1375,6 +1375,7 @@ dwl_output_printstatus_to(Monitor* monitor, DwlOutput *output)
+ {
+ 	Client *c, *focused;
+ 	int tagmask, state, numclients, focused_client, tag;
++    const char *title, *appid;
+ 	focused = focustop(monitor);
+ 	zdwl_output_v1_send_active(output->resource, monitor == selmon);
+ 
+@@ -1398,9 +1399,13 @@ dwl_output_printstatus_to(Monitor* monitor, DwlOutput *output)
+ 		}
+ 		zdwl_output_v1_send_tag(output->resource, tag, state, numclients, focused_client);
+ 	}
+-	zdwl_output_v1_send_layout(output->resource, monitor->lt[monitor->sellt] - layouts);
+-	zdwl_output_v1_send_title(output->resource, focused ? client_get_title(focused) : "");
+-	zdwl_output_v1_send_frame(output->resource);
++    title = focused ? client_get_title(focused) : "";
++    appid = focused ? client_get_appid(focused) : "";
++
++    zdwl_output_v1_send_layout(output->resource, monitor->lt[monitor->sellt] - layouts);
++    zdwl_output_v1_send_title(output->resource, title ? title : broken);
++    zdwl_output_v1_send_appid(output->resource, appid ? appid : broken);
++    zdwl_output_v1_send_frame(output->resource);
+ }
+ 
+ void
+diff --git a/protocols/dwl-bar-ipc-unstable-v1.xml b/protocols/dwl-bar-ipc-unstable-v1.xml
+index c2d0674f..ca7df773 100644
+--- a/protocols/dwl-bar-ipc-unstable-v1.xml
++++ b/protocols/dwl-bar-ipc-unstable-v1.xml
+@@ -10,7 +10,7 @@ I would probably just submit raphi's patchset but I don't think that would be po
+     Warning! This protocol is experimental and may make backward incompatible changes.
+   </description>
+ 
+-  <interface name="zdwl_manager_v1" version="1">
++  <interface name="zdwl_manager_v1" version="2">
+     <description summary="manage dwl state">
+       This interface is exposed as a global in wl_registry.
+ 
+@@ -51,7 +51,7 @@ I would probably just submit raphi's patchset but I don't think that would be po
+     </event>
+   </interface>
+ 
+-  <interface name="zdwl_output_v1" version="1">
++  <interface name="zdwl_output_v1" version="2">
+     <description summary="control dwl output">
+       Observe and control a dwl output.
+ 
+@@ -112,6 +112,13 @@ I would probably just submit raphi's patchset but I don't think that would be po
+       <arg name="title" type="string" summary="The new title name."/>
+     </event>
+ 
++    <event name="appid">
++      <description summary="Update the appid.">
++        Indicates the appid has changed.
++      </description>
++      <arg name="appid" type="string" summary="The new appid."/>
++    </event>
++
+     <event name="frame">
+       <description summary="The update sequence is done.">
+         Indicates that a sequence of status updates have finished and the client should redraw.
+
+From e9cd8e936e939ea8bc7ca8b1c738949d1c7e299a Mon Sep 17 00:00:00 2001
+From: MadcowOG <N/A>
+Date: Mon, 27 Feb 2023 17:02:46 -0800
+Subject: [PATCH 4/6] Fixed version imcompatibility, I don't know how I missed
+ this.
+
+---
+ dwl.c                                 |  6 ++++--
+ protocols/dwl-bar-ipc-unstable-v1.xml | 17 +++++++++++++----
+ 2 files changed, 17 insertions(+), 6 deletions(-)
+
+diff --git a/dwl.c b/dwl.c
+index b01d3106..6911e03e 100644
+--- a/dwl.c
++++ b/dwl.c
+@@ -1400,11 +1400,13 @@ dwl_output_printstatus_to(Monitor* monitor, DwlOutput *output)
+ 		zdwl_output_v1_send_tag(output->resource, tag, state, numclients, focused_client);
+ 	}
+     title = focused ? client_get_title(focused) : "";
+-    appid = focused ? client_get_appid(focused) : "";
+ 
+     zdwl_output_v1_send_layout(output->resource, monitor->lt[monitor->sellt] - layouts);
+     zdwl_output_v1_send_title(output->resource, title ? title : broken);
+-    zdwl_output_v1_send_appid(output->resource, appid ? appid : broken);
++    if (wl_resource_get_version(output->resource) >= ZDWL_OUTPUT_V1_APPID) { /* Don't break clients using version 1 */
++        appid = focused ? client_get_appid(focused) : "";
++        zdwl_output_v1_send_appid(output->resource, appid ? appid : broken);
++    }
+     zdwl_output_v1_send_frame(output->resource);
+ }
+ 
+diff --git a/protocols/dwl-bar-ipc-unstable-v1.xml b/protocols/dwl-bar-ipc-unstable-v1.xml
+index ca7df773..b7637751 100644
+--- a/protocols/dwl-bar-ipc-unstable-v1.xml
++++ b/protocols/dwl-bar-ipc-unstable-v1.xml
+@@ -5,9 +5,18 @@ I would probably just submit raphi's patchset but I don't think that would be po
+ -->
+ <protocol name="dwl_bar_ipc_unstable_v1">
+   <description summary="inter-proccess-communication about dwl's state">
+-    This protocol allows clients to get updates from dwl and vice versa.
+-
+-    Warning! This protocol is experimental and may make backward incompatible changes.
++      This protocol allows clients to get updates from dwl and vice versa.
++
++      Warning! The protocol described in this file is experimental and
++      backward incompatible changes may be made. Backward compatible
++      changes may be added together with the corresponding interface
++      version bump.
++      Backward incompatible changes are done by bumping the version
++      number in the protocol and interface names and resetting the
++      interface version. Once the protocol is to be declared stable, 
++      the 'z' prefix and the version number in the protocol and
++      interface names are removed and the interface version number is
++      reset.
+   </description>
+ 
+   <interface name="zdwl_manager_v1" version="2">
+@@ -112,7 +121,7 @@ I would probably just submit raphi's patchset but I don't think that would be po
+       <arg name="title" type="string" summary="The new title name."/>
+     </event>
+ 
+-    <event name="appid">
++    <event name="appid" since="2">
+       <description summary="Update the appid.">
+         Indicates the appid has changed.
+       </description>
+
+From bbca957db16e2c2d24d5f212b0f49aa3af0ace50 Mon Sep 17 00:00:00 2001
+From: MadcowOG <N/A>
+Date: Tue, 28 Feb 2023 03:51:06 -0800
+Subject: [PATCH 5/6] I messed it up again.
+
+---
+ dwl.c | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/dwl.c b/dwl.c
+index 6911e03e..79218ccf 100644
+--- a/dwl.c
++++ b/dwl.c
+@@ -1403,7 +1403,7 @@ dwl_output_printstatus_to(Monitor* monitor, DwlOutput *output)
+ 
+     zdwl_output_v1_send_layout(output->resource, monitor->lt[monitor->sellt] - layouts);
+     zdwl_output_v1_send_title(output->resource, title ? title : broken);
+-    if (wl_resource_get_version(output->resource) >= ZDWL_OUTPUT_V1_APPID) { /* Don't break clients using version 1 */
++    if (wl_resource_get_version(output->resource) >= ZDWL_OUTPUT_V1_APPID_SINCE_VERSION) { /* Don't break clients using version 1 */
+         appid = focused ? client_get_appid(focused) : "";
+         zdwl_output_v1_send_appid(output->resource, appid ? appid : broken);
+     }
+@@ -2510,7 +2510,7 @@ setup(void)
+ 	wl_signal_add(&output_mgr->events.test, &output_mgr_test);
+ 
+ 	wlr_scene_set_presentation(scene, wlr_presentation_create(dpy, backend));
+-	wl_global_create(dpy, &zdwl_manager_v1_interface, 1, NULL, dwl_manager_bind);
++	wl_global_create(dpy, &zdwl_manager_v1_interface, 2, NULL, dwl_manager_bind);
+ 
+ #ifdef XWAYLAND
+ 	/*
+
+From 9fb7aa6a6b365abf0e68c05d6cc313d8a544de1c Mon Sep 17 00:00:00 2001
+From: MadcowOG <N/A>
+Date: Wed, 1 Mar 2023 07:09:02 -0800
+Subject: [PATCH 6/6] Removed trailing whitespace as to avoid problems with git
+ apply
+
+---
+ protocols/dwl-bar-ipc-unstable-v1.xml | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/protocols/dwl-bar-ipc-unstable-v1.xml b/protocols/dwl-bar-ipc-unstable-v1.xml
+index b7637751..9c152465 100644
+--- a/protocols/dwl-bar-ipc-unstable-v1.xml
++++ b/protocols/dwl-bar-ipc-unstable-v1.xml
+@@ -13,7 +13,7 @@ I would probably just submit raphi's patchset but I don't think that would be po
+       version bump.
+       Backward incompatible changes are done by bumping the version
+       number in the protocol and interface names and resetting the
+-      interface version. Once the protocol is to be declared stable, 
++      interface version. Once the protocol is to be declared stable,
+       the 'z' prefix and the version number in the protocol and
+       interface names are removed and the interface version number is
+       reset.
