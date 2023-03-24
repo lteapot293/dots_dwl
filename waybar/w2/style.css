@@ -1,0 +1,101 @@
+* {
+    font-size: 16px;
+	font-family: Firacode Nerd Font;
+    font-weight: bold;
+	border-radius: 0px;
+
+}
+
+window#waybar {
+     border: solid 1px #FFFFFF;
+    color: #ADC1C7;
+	border-radius: 10px;
+	}
+
+window#waybar.termite {
+    background-color: #3F3F3F;
+}
+
+tooltip {
+    background: #1e1e2e;
+    border-radius: 10px;
+    border-width: 2px;
+    border-style: solid;
+    border-color: #11111b;
+}
+
+#workspaces {
+	border: solid 2px #a6adc8;
+}
+
+#workspaces button {
+    border-radius: 15px;
+    color: #929292;
+    
+}
+
+#workspaces button.active {
+    color: #cdd6f4;
+	border-radius: 15px;
+}
+
+#workspaces button.focused {
+    color: #a6adc8;
+	border-radius: 15px;
+}
+
+#workspaces button:hover {
+    background: #11111b;
+    border-radius: 15px;
+    color: #7979AF;
+}
+
+
+#window {
+font-size: 14px;
+color: #cdd6f4;
+padding: 10px;
+border-right: solid 2px #a6adc8;
+}
+
+
+
+#clock {
+	border: solid 2px #f9e2af;
+
+}
+
+#custom-git {
+border: solid 2px #8dd7fe;
+}
+
+#pulseaudio {
+	border: solid 2px #8dd7fe;
+}
+
+#backlight {
+border: solid 2px #fab387;
+
+}
+
+#battery {
+ border: solid 2px #a6e3a1;
+
+}
+
+#clock,
+#pulseaudio,
+#custom-git,
+#workspaces,
+#backlight,
+#battery { 
+	
+	margin: 5px;
+	
+	border-radius: 10px;
+	background-color: transparent;
+	padding: 0 5px;
+	margin-left: 10px;
+	color: #FFFFFF;
+
+}

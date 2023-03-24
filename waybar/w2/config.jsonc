@@ -1,0 +1,127 @@
+
+{
+	"layer": "top",
+	"position": "top",
+	"width": 50,
+    
+	"modules-left": ["tray", "wlr/workspaces", "clock", "custom/git", "battery", "backlight", "pulseaudio"],
+	"modules-center": [],
+	"modules-right": [],
+
+
+     "clock": {
+        "format": "{: %R  %d/%m}",
+        "tooltip-format": "<big>{:%Y %B}</big>\n<tt><small>{calendar}</small></tt>"
+},
+
+
+    "wlr/workspaces": {
+        "on-scroll-up": "hyprctl dispatch workspace e+1",
+        "on-scroll-down": "hyprctl dispatch workspace e-1",
+        "on-click": "activate",
+        "format": "{icon}",
+        "format-icons": {
+            "1":"",
+            "2":"",
+            "3":"",
+            "4":"",
+            "5":"",
+            "urgent": "", 
+            "active": "",
+            "default": ""
+          }
+    },
+
+     
+      "hyprland/window": {
+        "format": "{} "
+    },
+    
+       "custom/git": {
+       "on-click": "firefox --new-window https://github.com/lteapot293",       
+	   "format": "git{icon}",
+	   "format-icons": ["  "]
+},
+    
+    "hyprland/language": {
+        "format": "{}",
+        "format-en": "us",
+        "format-ru": "ru",
+        },
+        
+	"bluetooth": {
+        "format-disabled": "OFF ",
+        "format-off": "ВЫКЛ ",
+        "format-on": "ВКЛ ",
+        "format-connected": " {device_alias}",
+        "format-connected-battery": " {device_alias}  {device_battery_percentage}%",
+        "on-click": "blueman-manager",
+        "tooltip": false
+    },
+	
+	"backlight": {
+        "device": "intel_backlight",
+        "format": "{icon} {percent}%",
+        "format-icons": ["", "", ""],
+        "on-scroll-up": "brightnessctl set 1%+",
+        "on-scroll-down": "brightnessctl set 1%-",
+        "min-length": 6
+    },
+	
+	"pulseaudio": {
+		"format": "{icon} {volume:2}%",
+		"format-bluetooth": "{icon}  {volume}%",
+		"format-muted": "MUTE",
+		"format-icons": {
+			"headphones": "",
+			"default": [
+				"",
+				""
+			]
+		},
+		"scroll-step": 5,
+		"on-click": "pamixer -t",
+		"on-click-right": "pavucontrol"
+	},
+	
+	"network": {
+        "format-wifi": " 直 ",
+        "format-ethernet": " ",
+        "format-linked": "(No IP) ",
+        "format-disconnected": " 睊 ",
+        "tooltip-format-wifi": "Signal Strenght: {signalStrength}% | Down Speed: {bandwidthDownBits}, Up Speed: {bandwidthUpBits}",
+        "on-click": "wofi-wifi-menu"
+    },
+	
+	"memory": {
+		"interval": 5,
+		"format": "Mem {}%"
+	},
+	"cpu": {
+		"interval": 5,
+		"format": "󰻠 {usage:2}%"
+	},
+		
+
+ "battery": {
+        "states": {
+            "good": 95,
+            "warning": 30,
+            "critical": 20
+        },
+        "format": "{icon} {capacity}%",
+        "format-charging": " {capacity}%",
+        "format-plugged": " {capacity}%",
+        "format-alt": "{time} {icon}",
+        "format-icons": ["", "", "", "", "", "", "", "", "", "", ""]
+    },
+
+	"disk": {
+		"interval": 5,
+		"format": "Disk {percentage_used:2}%",
+		"path": "/"
+	},
+	"tray": {
+		"icon-size": 20
+	}
+}

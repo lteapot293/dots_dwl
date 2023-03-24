@@ -1,0 +1,131 @@
+* {
+    font-size: 16px;
+	font-family: Firacode Nerd Font;
+    font-weight: bold;
+	border-radius: 0px;
+
+}
+
+window#waybar {
+
+	background-color: transparent;
+	border-radius: 10px;
+	}
+
+window#waybar.termite {
+    background-color: #3F3F3F;
+}
+
+tooltip {
+    background: #1e1e2e;
+    border-radius: 10px;
+    border-width: 2px;
+    border-style: solid;
+    border-color: #11111b;
+}
+
+#custom-dwl_layout {
+    border-radius: 50% 20% / 10% 40%;
+    color: #FFFFFF;
+	border: solid 2px #a6adc8;
+}
+	
+#custom-dwl_title {
+     border-radius: 10px;
+     border-bottom: solid 3px #a6adc8;
+     color: #fab387;
+	 padding: 0 10px;
+}	
+#custom-dwl_tag.0 {    
+	border-top-left-radius: 10px;
+	border-bottom-left-radius: 10px;
+	border-left: solid 2px #a6adc8;
+}
+
+#custom-dwl_tag.8 {    
+    border-top-right-radius: 10px;
+	border-bottom-right-radius: 10px;
+	border-right: solid 2px #a6adc8;
+}
+
+#custom-dwl_tag {
+     border-top: solid 2px #a6adc8;
+     border-bottom: solid 2px #a6adc8;
+     border-right: solid 2px #a6adc8;
+     color: #FFFFFF;
+	 background-color: #434C5E;
+}
+	
+#custom-dwl_tag.selected {
+     border-top: 2px solid #017AFF;
+}
+	
+#custom-dwl_tag.urgent {
+     background-color: #FF0000;
+}
+
+#custom-dwl_tag.active {
+     border-bottom: 2px solid #EC5800;
+}
+
+
+
+#window {
+font-size: 10px;
+color: #cdd6f4;
+padding: 10px;
+border-right: solid 2px #a6adc8;
+}
+
+#clock {
+	border-top-left-radius: 10px;
+	border-bottom-left-radius: 10px;
+	color: #f9e2af;
+
+}
+
+#custom-git {
+	color: #8dd7fe;
+
+}
+
+#pulseaudio {
+	color: #8dd7fe;
+
+}
+
+#backlight {
+	color: #fab387;
+
+}
+
+#battery {
+	color: #a6e3a1;
+
+}
+
+#custom-poff {
+border-left: solid 2px #a6adc8;
+	border-top-right-radius: 10px;
+	border-bottom-right-radius: 10px;
+
+}
+
+#tray {
+border-radius: 25% 10%;
+margin-left: 5px;
+}
+
+#custom-poff,
+#clock,
+#tray,
+#window,
+#pulseaudio,
+#custom-git,
+#workspaces,
+#backlight,
+#battery { 
+	 border: solid 2px #a6adc8;
+	background-color: #434C5E;
+	padding: 0 5px;
+}

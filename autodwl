@@ -64,4 +64,4 @@ export XCURSOR_THEME=Catppuccin-Mocha-Dark-Cursors
 export XCURSOR_SIZE=16
 export GTK_THEME=Nordic
 
-exec /home/teapot293/.local/bin/dwl
+exec dwl > /home/teapot293/.cache/dwltags
